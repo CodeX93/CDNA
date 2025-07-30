@@ -17,58 +17,118 @@ import jobSeekersRoutes from "./routes/jobseekers.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || "your_mongodb_connection_string";
+const MONGO_URI = process.env.MONGO_URI;
 
-// MongoDB connection function
+// MongoDB connection function with better error handling
 const connectDB = async () => {
   try {
+    if (!MONGO_URI) {
+      logger.warn("MONGO_URI not provided, skipping database connection");
+      return;
+    }
+
     if (mongoose.connection.readyState === 1) {
-      return; // Already connected
+      logger.info("MongoDB already connected");
+      return;
     }
     
     await mongoose.connect(MONGO_URI, {
-      maxPoolSize: 10,
+      maxPoolSize: 5,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
+      bufferCommands: false,
+      bufferMaxEntries: 0
     });
     logger.info("MongoDB connected successfully");
   } catch (err) {
-    logger.error("MongoDB connection error:", err);
+    logger.error("MongoDB connection error:", err.message);
+    // Don't throw error, let the app continue without DB
   }
 };
 
-// Connect to MongoDB
+// Initialize database connection
 connectDB();
 
+// Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  origin: process.env.FRONTEND_URL || "*",
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-app.use("/api/jobs", validatePagination, validateSearch, jobRoutes);
-app.use("/api/health", healthRoutes);
-app.use("/api/register", registerRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/jobseekers", jobSeekersRoutes);
+// Health check route (no DB dependency)
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development"
+  });
+});
+
+// Root route
+app.get("/", (req, res) => {
+  res.json({ 
+    message: "Server Running", 
+    timestamp: new Date().toISOString() 
+  });
+});
+
+// API routes (only if DB is connected)
+if (MONGO_URI) {
+  app.use("/api/jobs", validatePagination, validateSearch, jobRoutes);
+  app.use("/api/register", registerRoutes);
+  app.use("/api/auth", authRoutes);
+  app.use("/api/jobseekers", jobSeekersRoutes);
+} else {
+  // Fallback routes when DB is not available
+  app.use("/api/jobs", (req, res) => {
+    res.status(503).json({ 
+      success: false, 
+      error: "Database not configured" 
+    });
+  });
+  app.use("/api/register", (req, res) => {
+    res.status(503).json({ 
+      success: false, 
+      error: "Database not configured" 
+    });
+  });
+  app.use("/api/auth", (req, res) => {
+    res.status(503).json({ 
+      success: false, 
+      error: "Database not configured" 
+    });
+  });
+  app.use("/api/jobseekers", (req, res) => {
+    res.status(503).json({ 
+      success: false, 
+      error: "Database not configured" 
+    });
+  });
+}
 
 // Centralized Error Handling
 app.use(errorHandler);
 
 // 404 Not Found Middleware
-app.use((req, res, next) => {
-  res.status(404).json({ success: false, error: "Not Found" });
+app.use((req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    error: "Not Found",
+    path: req.path 
+  });
 });
 
-app.get("/", (req, res) => {
-  res.send("Server Running");
-});
-
-// Error Handling Middleware
+// Global Error Handling Middleware
 app.use((err, req, res, next) => {
+  console.error('Error:', err);
   logger.error(err.stack);
-  res.status(500).json({ success: false, error: "Internal Server Error" });
+  res.status(500).json({ 
+    success: false, 
+    error: "Internal Server Error",
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
 // For local development
