@@ -19,15 +19,31 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI || "your_mongodb_connection_string";
 
-// Connect to MongoDB only if not in Vercel environment
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  mongoose
-    .connect(MONGO_URI)
-    .then(() => logger.info("MongoDB connected"))
-    .catch((err) => logger.error("MongoDB connection error:", err));
-}
+// MongoDB connection function
+const connectDB = async () => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      return; // Already connected
+    }
+    
+    await mongoose.connect(MONGO_URI, {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    logger.info("MongoDB connected successfully");
+  } catch (err) {
+    logger.error("MongoDB connection error:", err);
+  }
+};
 
-app.use(cors());
+// Connect to MongoDB
+connectDB();
+
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  credentials: true
+}));
 app.use(express.json());
 app.use(cookieParser());
 
@@ -56,7 +72,7 @@ app.use((err, req, res, next) => {
 });
 
 // For local development
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     logger.info(`Server is running on port ${PORT}`);
   });

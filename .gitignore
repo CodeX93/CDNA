@@ -49,3 +49,4 @@ dump.rdb
 
 # Ignore local uploads if any
 uploads/
+.vercel
